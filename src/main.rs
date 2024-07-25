@@ -39,24 +39,26 @@ use panic_halt as _;
 use static_cell::StaticCell;
 use rand_core::{RngCore, CryptoRng, Error as RandError};
 
-// Custom RNG implementation
+// Custom RNG implementation for debugging
+// Custom RNG implementation for debugging
 pub struct SimpleRng {
-    rng: Rng,
+    counter: u32, // Simple counter for pseudo-random numbers
 }
 
 impl SimpleRng {
-    pub fn new(rng: Rng) -> Self {
-        Self { rng }
+    pub fn new() -> Self {
+        Self { counter: 0 }
     }
 }
 
 impl RngCore for SimpleRng {
     fn next_u32(&mut self) -> u32 {
-        self.rng.random() // Use the hardware RNG to get a random u32
+        // Simple counter-based pseudo-random number generator
+        self.counter = self.counter.wrapping_add(1);
+        self.counter
     }
 
     fn next_u64(&mut self) -> u64 {
-        // Combining two u32 values to create a u64 value
         let upper = self.next_u32() as u64;
         let lower = self.next_u32() as u64;
         (upper << 32) | lower
@@ -79,6 +81,7 @@ impl RngCore for SimpleRng {
 }
 
 impl CryptoRng for SimpleRng {}
+
 
 // WiFi
 const SSID: &str = env!("SSID");
@@ -219,10 +222,10 @@ async fn main(spawner: Spawner) {
     let config: TlsConfig<'_, Aes128GcmSha256> = TlsConfig::new().with_server_name("www.google.com");
     let mut tls = TlsConnection::new(socket, &mut rx_buffer_tls, &mut tx_buffer_tls);
 
-    // Initialize custom RNG
-    let mut rng = SimpleRng::new(rng);
+     // Use the simplified RNG for debugging
+     let mut simple_rng = SimpleRng::new();
 
-    tls.open::<SimpleRng, NoVerify>(TlsContext::new(&config, &mut rng)).await.unwrap();
+     tls.open::<SimpleRng, NoVerify>(TlsContext::new(&config, &mut simple_rng)).await.unwrap();
 
     //tls.open(TlsContext::new(&config, &mut rng, NoVerify)).await.unwrap();
 
