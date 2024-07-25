@@ -19,6 +19,7 @@ use esp_hal::entry;
 use esp_hal::timer::timg::Timer0;
 use esp_hal::peripherals::TIMG0;
 use esp_hal::timer::timg::TimerX;
+use esp_hal::prelude::_esp_hal_timer_Timer;
 use esp_println::println;
 use esp_wifi::{initialize, wifi::{ClientConfiguration, Configuration, WifiController, WifiStaDevice}};
 use esp_wifi::EspWifiInitFor;
@@ -27,13 +28,16 @@ use static_cell::StaticCell;
 use core::str;
 use esp_hal_embassy;
 use heapless::String;
+use esp_hal::prelude::_fugit_ExtU64;
 
 // WiFi
 const SSID: &str = env!("SSID");
 const PASSWORD: &str = env!("PASSWORD");
 
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(90); // Total timeout of 90 seconds
-const PRINT_INTERVAL: Duration = Duration::from_secs(30); // Print message every 30 seconds
+
+const CONNECT_TIMEOUT_MS: u64 = 90_000; // Total timeout of 90 seconds in milliseconds
+const PRINT_INTERVAL_MS: u64 = 30_000;  // Print message every 30 seconds in milliseconds
+const TIMER_FREQUENCY_HZ: u64 = 80_000_000; // Frequency in Hz
 
 #[main]
 async fn main(spawner: Spawner) {
@@ -48,12 +52,23 @@ async fn main(spawner: Spawner) {
     let system = SystemControl::new(peripherals.SYSTEM);
     let clocks = ClockControl::max(system.clock_control).freeze();
 
+    /* 
     let timer_group = TimerGroup::new(peripherals.TIMG0, &clocks, None);
     let timer0 = timer_group.timer0;
 
     let timer = esp_hal::timer::systimer::SystemTimer::new(peripherals.SYSTIMER).alarm0;
 
+    */
+
+    let mut timer_group = TimerGroup::new(peripherals.TIMG0, &clocks, None);
+    let mut timer0 = timer_group.timer0;
+
+    let timer = esp_hal::timer::systimer::SystemTimer::new(peripherals.SYSTIMER).alarm0;
+
+    // Start the timer 
+    timer0.start();
 /* 
+
 
     let init = initialize(
         EspWifiInitFor::Wifi,
@@ -100,7 +115,10 @@ async fn main(spawner: Spawner) {
 
     controller.set_configuration(&Configuration::Client(client_config)).unwrap();
     controller.start().await.unwrap();
+    println!("WiFi Started...");
+
     controller.connect().await.unwrap();
+    println!("Connecting to Wi-Fi...");
 
     let config = Config::dhcpv4(Default::default());
     let seed = 1234;
@@ -117,31 +135,78 @@ async fn main(spawner: Spawner) {
     let mut rx_buffer = [0; 4096];
     let mut tx_buffer = [0; 4096];
 
-    //let mut connected = false;
-    let mut elapsed = Duration::from_secs(0);
-    let mut last_print = Duration::from_secs(0);
-    let retry_interval = Duration::from_millis(200); // Interval between retries
-    
-    while elapsed < CONNECT_TIMEOUT {
+    let mut rx_buffer = [0; 4096];
+    let mut tx_buffer = [0; 4096];
+
+    let start_time = timer0.now();
+    let mut last_print = start_time;
+    let retry_interval_us = 200_000; // Interval between retries in microseconds
+
+    while (timer0.now() - start_time) < CONNECT_TIMEOUT_MS.millis() {
         println!("Connection Timer Started...");
 
         if stack.is_link_up() {
             println!("Got IP: {:?}", stack.config_v4().unwrap().address);
-            //connected = true;
             break;
         }
-    
+
+        // Calculate and print the time remaining until the timeout
+        let elapsed = timer0.now() - start_time;
+        let remaining_time_ms = CONNECT_TIMEOUT_MS - elapsed.to_millis();
+        let remaining_seconds = remaining_time_ms / 1000;
+        println!("Time remaining until timeout: {} seconds", remaining_seconds);
+
         // Check if it's time to print the waiting message
-        if elapsed - last_print >= PRINT_INTERVAL {
+        if elapsed > last_print + PRINT_INTERVAL_MS.millis() {
             println!("Not connected yet, waiting for 30 more seconds...");
-            last_print = elapsed;
+            last_print = timer0.now();
         }
-    
-        EmbassyTimer::after(retry_interval).await;
-        elapsed += retry_interval;
+
+        // Manual delay using the timer (busy-wait)
+        let delay_start = timer0.now();
+        while (timer0.now() - delay_start) < retry_interval_us.micros() {}
+
+        if !stack.is_link_up() {
+            println!("Failed to connect to Wi-Fi within the timeout period.");
+            return;
+        }
     }
 
+    println!("Start busy loop on main");
+    let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
+
+    loop {
+        println!("Making HTTP request");
+
+        if let Err(e) = socket.connect((Ipv4Address::new(142, 250, 185, 115), 80)).await {
+            println!("Failed to open socket: {:?}", e);
+            continue;
+        }
+
+        if let Err(e) = socket.write(b"GET / HTTP/1.0\r\nHost: www.mobile-j.de\r\n\r\n").await {
+            println!("Failed to write to socket: {:?}", e);
+            continue;
+        }
+
+        if let Err(e) = socket.flush().await {
+            println!("Failed to flush socket: {:?}", e);
+        }
+
+        let mut response = [0; 512];
+        if let Ok(size) = socket.read(&mut response).await {
+            if let Ok(text) = core::str::from_utf8(&response[..size]) {
+                println!("{}", text);
+            }
+        }
+
+        socket.close();
+
+        // Manual delay for 5 seconds using the timer
+        let delay_start = timer0.now();
+        while (timer0.now() - delay_start) < 5_000_000.micros() {}
+    }
 }
+
     /* 
     let init = initialize(
         EspWifiInitFor::Wifi,
