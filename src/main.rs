@@ -28,9 +28,12 @@ use core::str;
 use esp_hal_embassy;
 use heapless::String;
 
+// WiFi
 const SSID: &str = env!("SSID");
 const PASSWORD: &str = env!("PASSWORD");
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(90); // Total timeout of 90 seconds
+const PRINT_INTERVAL: Duration = Duration::from_secs(30); // Print message every 30 seconds
 
 #[main]
 async fn main(spawner: Spawner) {
@@ -50,6 +53,8 @@ async fn main(spawner: Spawner) {
 
     let timer = esp_hal::timer::systimer::SystemTimer::new(peripherals.SYSTIMER).alarm0;
 
+/* 
+
     let init = initialize(
         EspWifiInitFor::Wifi,
         timer,
@@ -58,6 +63,25 @@ async fn main(spawner: Spawner) {
         &clocks,
     )
     .unwrap();
+
+    */
+
+    let init = match initialize(
+        EspWifiInitFor::Wifi,
+        timer,
+        Rng::new(peripherals.RNG),
+        peripherals.RADIO_CLK,
+        &clocks,
+    ) {
+        Ok(init) => {
+            println!("Wi-Fi initialization successful.");
+            init
+        },
+        Err(e) => {
+            println!("Wi-Fi initialization failed: {:?}", e);
+            return;
+        }
+    };
 
     let wifi = peripherals.WIFI;
     let (wifi_interface, mut controller) =
@@ -93,22 +117,28 @@ async fn main(spawner: Spawner) {
     let mut rx_buffer = [0; 4096];
     let mut tx_buffer = [0; 4096];
 
-    let mut connected = false;
+    //let mut connected = false;
     let mut elapsed = Duration::from_secs(0);
-
+    let mut last_print = Duration::from_secs(0);
+    let retry_interval = Duration::from_millis(200); // Interval between retries
+    
     while elapsed < CONNECT_TIMEOUT {
+        println!("Connection Timer Started...");
+
         if stack.is_link_up() {
             println!("Got IP: {:?}", stack.config_v4().unwrap().address);
-            connected = true;
+            //connected = true;
             break;
         }
-
-        EmbassyTimer::after(Duration::from_millis(500)).await;
-        elapsed += Duration::from_millis(500);
-    }
-
-    if !connected {
-        println!("Failed to connect to Wi-Fi within the timeout period.");
+    
+        // Check if it's time to print the waiting message
+        if elapsed - last_print >= PRINT_INTERVAL {
+            println!("Not connected yet, waiting for 30 more seconds...");
+            last_print = elapsed;
+        }
+    
+        EmbassyTimer::after(retry_interval).await;
+        elapsed += retry_interval;
     }
 
 }
