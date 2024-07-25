@@ -107,10 +107,13 @@ async fn main(spawner: Spawner) {
     // Start the timer
     timer0.start();
 
+    // Initialize RNG peripherial
+    let rng = Rng::new(peripherals.RNG);
+
     let init = match initialize(
         EspWifiInitFor::Wifi,
         timer,
-        Rng::new(peripherals.RNG),
+        rng,
         peripherals.RADIO_CLK,
         &clocks,
     ) {
