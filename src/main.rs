@@ -36,7 +36,48 @@ use fugit;
 use heapless::String;
 use panic_halt as _;
 use static_cell::StaticCell;
-use rand;
+use rand_core::{RngCore, CryptoRng, Error as RandError};
+
+// Custom RNG implementation
+pub struct SimpleRng {
+    rng: Rng,
+}
+
+impl SimpleRng {
+    pub fn new(rng: Rng) -> Self {
+        Self { rng }
+    }
+}
+
+impl RngCore for SimpleRng {
+    fn next_u32(&mut self) -> u32 {
+        self.rng.random() // Use the hardware RNG to get a random u32
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        // Combining two u32 values to create a u64 value
+        let upper = self.next_u32() as u64;
+        let lower = self.next_u32() as u64;
+        (upper << 32) | lower
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        for chunk in dest.chunks_mut(4) {
+            let rand = self.next_u32();
+            let bytes = rand.to_ne_bytes();
+            for (i, byte) in chunk.iter_mut().enumerate() {
+                *byte = bytes[i];
+            }
+        }
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), RandError> {
+        self.fill_bytes(dest);
+        Ok(())
+    }
+}
+
+impl CryptoRng for SimpleRng {}
 
 // WiFi
 const SSID: &str = env!("SSID");
@@ -162,17 +203,20 @@ async fn main(spawner: Spawner) {
 
     println!("Stack IP Configuration: {:?}", stack.config_v4());
 
-     let mut read_record_buffer = [0; 16384];
-     let mut write_record_buffer = [0; 16384];
-     let config = TlsConfig::new().with_server_name("www.google.com");
-     let mut tls = TlsConnection::new(socket, &mut read_record_buffer, &mut write_record_buffer);
+    // TLS connection setup
+    let mut rx_buffer = [0; 16384];
+    let mut tx_buffer = [0; 16384];
 
-     tls.open(TlsContext::new(
-         &config,
-         UnsecureProvider::new::<Aes128GcmSha256>(rand::rngs::OsRng),
-     ))
-     .await
-     .unwrap();
+    // Create a new TCP socket
+    let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
+
+    let config = TlsConfig::new().with_server_name("www.google.com");
+    let mut tls = TlsConnection::new(socket, &mut rx_buffer, &mut tx_buffer);
+
+    // Initialize custom RNG
+    let mut rng = SimpleRng::new(Rng::new(peripherals.RNG));
+
+    tls.open(TlsContext::new(&config, &mut rng)).await.unwrap();
 
      tls.write_all(b"GET / HTTP/1.1\r\nHost: www.google.com\r\n\r\n").await.unwrap();
      tls.flush().await.unwrap();
