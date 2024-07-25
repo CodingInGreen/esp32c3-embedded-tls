@@ -22,6 +22,7 @@ use esp_hal::timer::timg::TimerX;
 use esp_println::println;
 use esp_wifi::{initialize, wifi::{ClientConfiguration, Configuration, WifiController, WifiStaDevice}};
 use esp_wifi::EspWifiInitFor;
+use esp_wifi::wifi::WifiDevice;
 use static_cell::StaticCell;
 use core::str;
 use esp_hal_embassy;
@@ -40,23 +41,52 @@ async fn main(spawner: Spawner) {
     let clocks = ClockControl::max(system.clock_control).freeze();
 
     let timer_group = TimerGroup::new(peripherals.TIMG0, &clocks, None);
-    let timer = timer_group.timer0;
+    let timer0 = timer_group.timer0;
 
-    //let timer: PeriodicTimer<TimerX<TIMG0, 0>> = PeriodicTimer::new(timer0);
+    let timer = esp_hal::timer::systimer::SystemTimer::new(peripherals.SYSTIMER).alarm0;
+
+    let init = initialize(
+        EspWifiInitFor::Wifi,
+        timer,
+        Rng::new(peripherals.RNG),
+        peripherals.RADIO_CLK,
+        &clocks,
+    )
+    .unwrap();
+
+    let wifi = peripherals.WIFI;
+    let (wifi_interface, controller) =
+        esp_wifi::wifi::new_with_mode(&init, wifi, WifiStaDevice).unwrap();
+
+    let config = Config::dhcpv4(Default::default());
+
+    let seed = 1234;
+
+    static STACK: StaticCell<Stack<WifiDevice<'_, WifiStaDevice>>> = StaticCell::new();
+    static RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
+    let stack = &*STACK.init(Stack::new(
+        wifi_interface,
+        config,
+        RESOURCES.init(StackResources::<3>::new()),
+        seed,
+    ));
+
+    let mut rx_buffer = [0; 4096];
+    let mut tx_buffer = [0; 4096];
+
+    println!("Waiting to get IP address...");
+    while !stack.is_link_up() {
+        EmbassyTimer::after(Duration::from_millis(500)).await;
+    }
+
+    println!("Got IP: {:?}", stack.config_v4().unwrap().address);
+
+}
+
     /* 
     let timer_group = TimerGroup::new(peripherals.TIMG0, &clocks, None);
-    let timer: PeriodicTimer<TimerX<TIMG0>> = PeriodicTimer::new(TimerX<TIMG0>);
-   */
+    let timer = timer_group.timer0;
 
-
-   
-    /* 
-    let timer: PeriodicTimer<Timer> = PeriodicTimer::new(
-        esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG0, &clocks, None)
-            .timer0
-            .into(),
-     );
-    */
     let timer = esp_hal::timer::systimer::SystemTimer::new(peripherals.SYSTIMER).alarm0;
 
      let init = initialize(
@@ -72,31 +102,29 @@ async fn main(spawner: Spawner) {
      let (wifi_interface, controller) =
          esp_wifi::wifi::new_with_mode(&init, wifi, WifiStaDevice).unwrap();
 
-    // let config = Config::dhcpv4(Default::default());
+     let config = Config::dhcpv4(Default::default());
 
-    // let seed = 1234;
+     let seed = 1234;
 
-    // static STACK: StaticCell<Stack<WifiStaDevice>> = StaticCell::new();
-    // static RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
-    // let stack = &*STACK.init(Stack::new(
-    //     wifi_interface,
-    //     config,
-    //     RESOURCES.init(StackResources::<3>::new()),
-    //     seed,
-    // ));
+     static STACK: StaticCell<Stack<WifiStaDevice>> = StaticCell::new();
+     static RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
+     let stack = &*STACK.init(Stack::new(
+         wifi_interface,
+         config,
+         RESOURCES.init(StackResources::<3>::new()),
+         seed,
+     ));
 
-    // spawner.spawn(connection(controller)).unwrap();
-    // spawner.spawn(net_task(stack)).unwrap();
 
-    // let mut rx_buffer = [0; 4096];
-    // let mut tx_buffer = [0; 4096];
+     let mut rx_buffer = [0; 4096];
+     let mut tx_buffer = [0; 4096];
 
-    // println!("Waiting to get IP address...");
-    // while !stack.is_link_up() {
-    //     Timer::after(Duration::from_millis(500)).await;
-    // }
+     println!("Waiting to get IP address...");
+     while !stack.is_link_up() {
+         Timer::after(Duration::from_millis(500)).await;
+     }
 
-    // println!("Got IP: {:?}", stack.config_v4().unwrap().address);
+     println!("Got IP: {:?}", stack.config_v4().unwrap().address);
 
     // let remote_endpoint = (Ipv4Address::new(142, 250, 185, 115), 443); // Google IP for testing
     // let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
@@ -149,6 +177,8 @@ async fn main(spawner: Spawner) {
 // async fn net_task(stack: &'static Stack<WifiStaDevice>) {
 //     stack.run().await;
 // }
+
+*/
 
 #[embassy_executor::task]
 async fn print_int(variable: i32 ) {
