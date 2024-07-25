@@ -30,6 +30,7 @@ use heapless::String;
 
 const SSID: &str = env!("SSID");
 const PASSWORD: &str = env!("PASSWORD");
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[main]
 async fn main(spawner: Spawner) {
@@ -38,7 +39,7 @@ async fn main(spawner: Spawner) {
 
     println!("Starting program...");
 
-    spawner.spawn(print_int(41)).unwrap();
+    //spawner.spawn(print_int(41)).unwrap();
 
     let peripherals = Peripherals::take();
     let system = SystemControl::new(peripherals.SYSTEM);
@@ -92,12 +93,24 @@ async fn main(spawner: Spawner) {
     let mut rx_buffer = [0; 4096];
     let mut tx_buffer = [0; 4096];
 
-    println!("Waiting to get IP address...");
-    while !stack.is_link_up() {
+    let mut connected = false;
+    let mut elapsed = Duration::from_secs(0);
+
+    while elapsed < CONNECT_TIMEOUT {
+        if stack.is_link_up() {
+            println!("Got IP: {:?}", stack.config_v4().unwrap().address);
+            connected = true;
+            break;
+        }
+
         EmbassyTimer::after(Duration::from_millis(500)).await;
+        elapsed += Duration::from_millis(500);
     }
 
-    println!("Got IP: {:?}", stack.config_v4().unwrap().address);
+    if !connected {
+        println!("Failed to connect to Wi-Fi within the timeout period.");
+    }
+
 }
     /* 
     let init = initialize(
@@ -236,7 +249,11 @@ async fn main(spawner: Spawner) {
 
 */
 
+/* 
+
 #[embassy_executor::task]
 async fn print_int(variable: i32 ) {
      println!("Integer: {}", variable);
  }
+
+ */
