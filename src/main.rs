@@ -6,7 +6,8 @@ use core::str;
 use embassy_executor::Spawner;
 use embassy_net::{tcp::TcpSocket, Config, Ipv4Address, Stack, StackResources};
 use embassy_time::{Duration, Timer as EmbassyTimer};
-use embedded_tls::{Aes128GcmSha256, TlsConfig, TlsConnection, TlsContext};
+use embedded_tls::{Aes128GcmSha256, TlsConfig, TlsConnection, TlsContext, NoVerify};
+use embedded_io_async::Write;
 use esp_hal::entry;
 use esp_hal::peripherals::TIMG0;
 use esp_hal::prelude::_esp_hal_timer_Timer;
@@ -204,27 +205,33 @@ async fn main(spawner: Spawner) {
     println!("Stack IP Configuration: {:?}", stack.config_v4());
 
     // TLS connection setup
-    let mut rx_buffer = [0; 16384];
-    let mut tx_buffer = [0; 16384];
+    let mut rx_buffer_tls = [0; 16384];
+    let mut tx_buffer_tls = [0; 16384];
 
     // Create a new TCP socket
-    let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
+    let mut rx_buffer_socket = [0; 16384];
+    let mut tx_buffer_socket = [0; 16384];
+    let socket = TcpSocket::new(stack, &mut rx_buffer_socket, &mut tx_buffer_socket);
 
-    let config = TlsConfig::new().with_server_name("www.google.com");
-    let mut tls = TlsConnection::new(socket, &mut rx_buffer, &mut tx_buffer);
+    let config: TlsConfig<'_, Aes128GcmSha256> = TlsConfig::new().with_server_name("www.google.com");
+    let mut tls = TlsConnection::new(socket, &mut rx_buffer_tls, &mut tx_buffer_tls);
 
     // Initialize custom RNG
-    let mut rng = SimpleRng::new(Rng::new(peripherals.RNG));
+    let mut rng = SimpleRng::new(rng);
 
-    tls.open(TlsContext::new(&config, &mut rng)).await.unwrap();
+    tls.open::<SimpleRng, NoVerify>(TlsContext::new(&config, &mut rng)).await.unwrap();
 
-     tls.write_all(b"GET / HTTP/1.1\r\nHost: www.google.com\r\n\r\n").await.unwrap();
-     tls.flush().await.unwrap();
+    //tls.open(TlsContext::new(&config, &mut rng, NoVerify)).await.unwrap();
 
-     let mut response = [0; 1024];
-     let size = tls.read(&mut response).await.unwrap();
-     println!("{}", str::from_utf8(&response[..size]).unwrap());
+    tls.write_all(b"GET / HTTP/1.1\r\nHost: www.google.com\r\n\r\n").await.unwrap();
+    tls.flush().await.unwrap();
 
+    let mut response = [0; 1024];
+    let size = tls.read(&mut response).await.unwrap();
+    println!("{}", str::from_utf8(&response[..size]).unwrap());
+
+
+    
 }
     /* 
 
