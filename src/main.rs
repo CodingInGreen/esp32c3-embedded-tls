@@ -1,27 +1,35 @@
 #![no_std]
 #![no_main]
+#![feature(type_alias_impl_trait)]
 
+use panic_halt as _;
 use embassy_executor::Spawner;
 use embassy_net::{tcp::TcpSocket, Config, Ipv4Address, Stack, StackResources};
 use embassy_time::{Duration, Timer};
-use embedded_tls::{Aes128GcmSha256, TlsConfig, TlsConnection, TlsContext, UnsecureProvider};
+use embedded_tls::{Aes128GcmSha256, TlsConfig, TlsConnection, TlsContext};
 use esp_hal::{
     clock::ClockControl,
     peripherals::Peripherals,
     rng::Rng,
     system::SystemControl,
-    timer::{ErasedTimer, OneShotTimer, PeriodicTimer},
+    timer::{OneShotTimer, PeriodicTimer},
 };
+use esp_hal::prelude::main;
+use esp_hal::entry;
 use esp_println::println;
 use esp_wifi::{initialize, wifi::{ClientConfiguration, Configuration, WifiController, WifiStaDevice}};
 use static_cell::StaticCell;
 use core::str;
 use esp_hal_embassy;
 
-#[esp_hal_embassy::main]
-async fn main(spawner: Spawner) -> ! {
-    todo!()
-    // esp_println::logger::init_logger_from_env();
+#[main]
+async fn main(spawner: Spawner) {
+    
+    esp_println::logger::init_logger_from_env();
+
+    println!("Starting program...");
+
+    spawner.spawn(print_int(41)).unwrap();
 
     // let peripherals = Peripherals::take();
     // let system = SystemControl::new(peripherals.SYSTEM);
@@ -123,3 +131,8 @@ async fn main(spawner: Spawner) -> ! {
 // async fn net_task(stack: &'static Stack<WifiStaDevice>) {
 //     stack.run().await;
 // }
+
+#[embassy_executor::task]
+async fn print_int(variable: i32 ) {
+     println!("Integer: {}", variable);
+ }
