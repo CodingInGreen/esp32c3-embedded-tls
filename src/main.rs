@@ -2,12 +2,13 @@
 #![no_main]
 #![feature(type_alias_impl_trait)]
 
+use core::ptr::addr_of_mut;
 use core::str;
 use embassy_executor::Spawner;
 use embassy_net::{tcp::TcpSocket, Config, Ipv4Address, Stack, StackResources};
 use embassy_time::{Duration, Timer as EmbassyTimer};
-use embedded_tls::{Aes128GcmSha256, TlsConfig, TlsConnection, TlsContext, NoVerify};
 use embedded_io_async::Write;
+use embedded_tls::{Aes128GcmSha256, NoVerify, TlsConfig, TlsConnection, TlsContext};
 use esp_hal::entry;
 use esp_hal::peripherals::TIMG0;
 use esp_hal::prelude::_esp_hal_timer_Timer;
@@ -25,6 +26,7 @@ use esp_hal::{
         OneShotTimer, PeriodicTimer,
     },
 };
+use esp_hal::rng::Trng;
 use esp_hal_embassy;
 use esp_println::println;
 use esp_wifi::wifi::WifiDevice;
@@ -36,8 +38,8 @@ use esp_wifi::{
 use fugit;
 use heapless::String;
 use panic_halt as _;
+use rand_core::{CryptoRng, Error as RandError, RngCore};
 use static_cell::StaticCell;
-use rand_core::{RngCore, CryptoRng, Error as RandError};
 
 // Custom RNG implementation for debugging
 // Custom RNG implementation for debugging
@@ -81,7 +83,6 @@ impl RngCore for SimpleRng {
 }
 
 impl CryptoRng for SimpleRng {}
-
 
 // WiFi
 const SSID: &str = env!("SSID");
@@ -211,69 +212,50 @@ async fn main(spawner: Spawner) {
     println!("Stack IP Configuration: {:?}", stack.config_v4());
 
     // TLS connection setup
-    let mut rx_buffer_tls = [0; 16384];
-    let mut tx_buffer_tls = [0; 16384];
+    static mut RX_BUFFER_TLS: [u8; 16384] = [0; 16384];
+    static mut TX_BUFFER_TLS: [u8; 16384] = [0; 16384];
 
     // Create a new TCP socket
-    let mut rx_buffer_socket = [0; 16384];
-    let mut tx_buffer_socket = [0; 16384];
-    let socket = TcpSocket::new(stack, &mut rx_buffer_socket, &mut tx_buffer_socket);
+    static mut RX_BUFFER_SOCKET: [u8; 1024] = [0; 1024];
+    static mut TX_BUFFER_SOCKET: [u8; 1024] = [0; 1024];
 
-    let config: TlsConfig<'_, Aes128GcmSha256> = TlsConfig::new().with_server_name("www.google.com");
-    let mut tls = TlsConnection::new(socket, &mut rx_buffer_tls, &mut tx_buffer_tls);
+    let (rx_buffer_tls, tx_buffer_tls, rx_buffer_socket, tx_buffer_socket) = unsafe {
+        (
+            &mut *addr_of_mut!(RX_BUFFER_TLS),
+            &mut *addr_of_mut!(TX_BUFFER_TLS),
+            &mut *addr_of_mut!(RX_BUFFER_SOCKET),
+            &mut *addr_of_mut!(TX_BUFFER_SOCKET),
+        )
+    };
 
-     // Use the simplified RNG for debugging
-     let mut simple_rng = SimpleRng::new();
+    let mut socket = TcpSocket::new(stack, rx_buffer_socket, tx_buffer_socket);
+    socket
+        .connect((Ipv4Address::new(142, 250, 203, 100), 443))
+        .await
+        .unwrap();
 
-     tls.open::<SimpleRng, NoVerify>(TlsContext::new(&config, &mut simple_rng)).await.unwrap();
+    let config: TlsConfig<'_, Aes128GcmSha256> =
+        TlsConfig::new().with_server_name("www.google.com");
+    let mut tls = TlsConnection::new(socket, rx_buffer_tls, tx_buffer_tls);
+
+    // Use the simplified RNG for debugging
+    let mut simple_rng = SimpleRng::new();
+
+    tls.open::<SimpleRng, NoVerify>(TlsContext::new(&config, &mut simple_rng))
+        .await
+        .unwrap();
 
     //tls.open(TlsContext::new(&config, &mut rng, NoVerify)).await.unwrap();
 
-    tls.write_all(b"GET / HTTP/1.1\r\nHost: www.google.com\r\n\r\n").await.unwrap();
+    tls.write_all(b"GET / HTTP/1.1\r\nHost: www.google.com\r\n\r\n")
+        .await
+        .unwrap();
     tls.flush().await.unwrap();
 
     let mut response = [0; 1024];
     let size = tls.read(&mut response).await.unwrap();
-    println!("{}", str::from_utf8(&response[..size]).unwrap());
-
-
-    
+    println!("Response: {}", str::from_utf8(&response[..size]).unwrap());
 }
-    /* 
-
-    let mut rx_buffer = [0; 4096];
-    let mut tx_buffer = [0; 4096];
-
-    println!("Connected to Wi-Fi, starting main loop...");
-    let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
-
-    if let Err(e) = socket
-        .connect((Ipv4Address::new(142, 250, 185, 115), 80))
-        .await
-    {
-        println!("Failed to open socket: {:?}", e);
-    }
-
-    if let Err(e) = socket
-        .write(b"GET / HTTP/1.0\r\nHost: www.mobile-j.de\r\n\r\n")
-        .await
-    {
-        println!("Failed to write to socket: {:?}", e);
-    }
-
-    if let Err(e) = socket.flush().await {
-        println!("Failed to flush socket: {:?}", e);
-    }
-
-    let mut response = [0; 512];
-    if let Ok(size) = socket.read(&mut response).await {
-        if let Ok(text) = core::str::from_utf8(&response[..size]) {
-            println!("{}", text);
-        }
-    }
-
-    socket.close();
-    */
 
 #[embassy_executor::task]
 async fn net_task(stack: &'static Stack<WifiDevice<'static, WifiStaDevice>>) {
