@@ -133,6 +133,8 @@ async fn main(spawner: Spawner) {
         seed,
     ));
 
+    println!("Stack IP Configuration: {:?}", stack.config_v4());
+
     let mut rx_buffer = [0; 4096];
     let mut tx_buffer = [0; 4096];
 
