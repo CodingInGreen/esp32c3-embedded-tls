@@ -26,7 +26,6 @@ use esp_hal::{
         OneShotTimer, PeriodicTimer,
     },
 };
-use esp_hal::rng::Trng;
 use esp_hal_embassy;
 use esp_println::println;
 use esp_wifi::wifi::WifiDevice;
@@ -211,6 +210,7 @@ async fn main(spawner: Spawner) {
 
     println!("Stack IP Configuration: {:?}", stack.config_v4());
 
+    /* Original
     // TLS connection setup
     static mut RX_BUFFER_TLS: [u8; 16384] = [0; 16384];
     static mut TX_BUFFER_TLS: [u8; 16384] = [0; 16384];
@@ -218,6 +218,19 @@ async fn main(spawner: Spawner) {
     // Create a new TCP socket
     static mut RX_BUFFER_SOCKET: [u8; 1024] = [0; 1024];
     static mut TX_BUFFER_SOCKET: [u8; 1024] = [0; 1024];
+
+    */
+
+
+    /* TEST */
+
+    // TLS connection setup
+    static mut RX_BUFFER_TLS: [u8; 8192] = [0; 8192];
+    static mut TX_BUFFER_TLS: [u8; 8192] = [0; 8192];
+
+    // Create a new TCP socket
+    static mut RX_BUFFER_SOCKET: [u8; 2048] = [0; 2048];
+    static mut TX_BUFFER_SOCKET: [u8; 2048] = [0; 2048];
 
     let (rx_buffer_tls, tx_buffer_tls, rx_buffer_socket, tx_buffer_socket) = unsafe {
         (
@@ -229,32 +242,61 @@ async fn main(spawner: Spawner) {
     };
 
     let mut socket = TcpSocket::new(stack, rx_buffer_socket, tx_buffer_socket);
-    socket
+
+
+    if let Err(e) = socket
         .connect((Ipv4Address::new(142, 250, 203, 100), 443))
         .await
-        .unwrap();
+    {
+        println!("Failed to connect to the server: {:?}", e);
+        return;
+    }
 
     let config: TlsConfig<'_, Aes128GcmSha256> =
         TlsConfig::new().with_server_name("www.google.com");
     let mut tls = TlsConnection::new(socket, rx_buffer_tls, tx_buffer_tls);
 
+    println!("Starting TLS handshake...");
+    if let Err(e) = tls
+        .open::<SimpleRng, NoVerify>(TlsContext::new(&config, &mut SimpleRng::new()))
+        .await
+    {
+        println!("TLS handshake failed: {:?}", e);
+        return;
+    }
+
+
+    println!("TLS handshake completed successfully.");
+    if let Err(e) = tls
+        .write_all(b"GET / HTTP/1.1\r\nHost: www.google.com\r\n\r\n")
+        .await
+    {
+        println!("Failed to send HTTP request: {:?}", e);
+        return;
+    }
+
+
     // Use the simplified RNG for debugging
-    let mut simple_rng = SimpleRng::new();
+    //let mut simple_rng = SimpleRng::new();
 
-    tls.open::<SimpleRng, NoVerify>(TlsContext::new(&config, &mut simple_rng))
-        .await
-        .unwrap();
 
-    //tls.open(TlsContext::new(&config, &mut rng, NoVerify)).await.unwrap();
-
-    tls.write_all(b"GET / HTTP/1.1\r\nHost: www.google.com\r\n\r\n")
-        .await
-        .unwrap();
-    tls.flush().await.unwrap();
-
+   
     let mut response = [0; 1024];
-    let size = tls.read(&mut response).await.unwrap();
-    println!("Response: {}", str::from_utf8(&response[..size]).unwrap());
+    match tls.read(&mut response).await {
+        Ok(size) => {
+            if size == 0 {
+                println!("Received no data from the server.");
+            } else {
+                println!(
+                    "Response: {}",
+                    str::from_utf8(&response[..size]).unwrap_or("Invalid UTF-8 response")
+                );
+            }
+        }
+        Err(e) => {
+            println!("Failed to read from TLS connection: {:?}", e);
+        }
+    }
 }
 
 #[embassy_executor::task]
