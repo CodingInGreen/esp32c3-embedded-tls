@@ -144,6 +144,11 @@ async fn main(spawner: Spawner) {
         seed,
     ));
 
+    // Launch network task that runs `stack.run().await`
+    spawner.spawn(net_task(stack)).unwrap();
+    // Wait for DHCP config
+    stack.wait_config_up().await;
+
     // Check the stack configuration
     let config_v4 = stack.config_v4();
     if let Some(config) = config_v4 {
@@ -358,3 +363,8 @@ async fn print_int(variable: i32 ) {
  }
 
  */
+
+ #[embassy_executor::task]
+async fn net_task(stack: &'static Stack<WifiDevice<'static, WifiStaDevice>>) {
+    stack.run().await
+}
