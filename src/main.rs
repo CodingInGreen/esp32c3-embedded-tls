@@ -102,13 +102,24 @@ async fn main(spawner: Spawner) {
     controller.start().await.unwrap();
     println!("WiFi Started...");
 
+
     let mut attempts = 0;
     loop {
         attempts += 1;
         println!("Attempt {}: Connecting to Wi-Fi...", attempts);
 
         if let Ok(()) = controller.connect().await {
-            println!("Connected to Wi-Fi.");
+
+        // After starting Wi-Fi and setting configuration
+        if let Ok(is_connected) = controller.is_connected() {
+            if is_connected {
+                println!("Wi-Fi connected successfully.");
+            } else {
+                println!("Wi-Fi is not connected.");
+            }
+        } else {
+            println!("Error checking Wi-Fi connection status.");
+        }
             break;
         }
 
@@ -133,6 +144,14 @@ async fn main(spawner: Spawner) {
         seed,
     ));
 
+    // Check the stack configuration
+    let config_v4 = stack.config_v4();
+    if let Some(config) = config_v4 {
+        println!("IP Address: {:?}", config.address);
+    } else {
+        println!("Failed to obtain IP address.");
+    }
+
     println!("Stack IP Configuration: {:?}", stack.config_v4());
 
     let mut rx_buffer = [0; 4096];
@@ -141,6 +160,28 @@ async fn main(spawner: Spawner) {
     println!("Connected to Wi-Fi, starting main loop...");
     let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
 
+    if let Err(e) = socket.connect((Ipv4Address::new(142, 250, 185, 115), 80)).await {
+        println!("Failed to open socket: {:?}", e);
+    }
+
+    if let Err(e) = socket.write(b"GET / HTTP/1.0\r\nHost: www.mobile-j.de\r\n\r\n").await {
+        println!("Failed to write to socket: {:?}", e);
+    }
+
+    if let Err(e) = socket.flush().await {
+        println!("Failed to flush socket: {:?}", e);
+    }
+
+
+    let mut response = [0; 512];
+        if let Ok(size) = socket.read(&mut response).await {
+            if let Ok(text) = core::str::from_utf8(&response[..size]) {
+                println!("{}", text);
+            }
+        }
+
+    socket.close();
+    /* 
     loop {
         println!("Making HTTP request");
 
@@ -170,6 +211,7 @@ async fn main(spawner: Spawner) {
         println!("Delaying for 5 seconds before next request...");
         EmbassyTimer::after(Duration::from_secs(5)).await;
     }
+    */
 }
 
 /*
