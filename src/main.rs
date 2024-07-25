@@ -5,19 +5,23 @@
 use panic_halt as _;
 use embassy_executor::Spawner;
 use embassy_net::{tcp::TcpSocket, Config, Ipv4Address, Stack, StackResources};
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Timer as EmbassyTimer};
 use embedded_tls::{Aes128GcmSha256, TlsConfig, TlsConnection, TlsContext};
 use esp_hal::{
     clock::ClockControl,
     peripherals::Peripherals,
     rng::Rng,
     system::SystemControl,
-    timer::{OneShotTimer, PeriodicTimer},
+    timer::{OneShotTimer, PeriodicTimer, timg::{TimerGroup, Timer}},
 };
 use esp_hal::prelude::main;
 use esp_hal::entry;
+use esp_hal::timer::timg::Timer0;
+use esp_hal::peripherals::TIMG0;
+use esp_hal::timer::timg::TimerX;
 use esp_println::println;
 use esp_wifi::{initialize, wifi::{ClientConfiguration, Configuration, WifiController, WifiStaDevice}};
+use esp_wifi::EspWifiInitFor;
 use static_cell::StaticCell;
 use core::str;
 use esp_hal_embassy;
@@ -31,28 +35,42 @@ async fn main(spawner: Spawner) {
 
     spawner.spawn(print_int(41)).unwrap();
 
-    // let peripherals = Peripherals::take();
-    // let system = SystemControl::new(peripherals.SYSTEM);
-    // let clocks = ClockControl::max(system.clock_control).freeze();
+    let peripherals = Peripherals::take();
+    let system = SystemControl::new(peripherals.SYSTEM);
+    let clocks = ClockControl::max(system.clock_control).freeze();
 
-    // let timer = PeriodicTimer::new(
-    //     esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG0, &clocks)
-    //         .timer0
-    //         .into(),
-    // );
+    let timer_group = TimerGroup::new(peripherals.TIMG0, &clocks, None);
+    let timer = timer_group.timer0;
 
-    // let init = initialize(
-    //     EspWifiInitFor::Wifi,
-    //     timer,
-    //     Rng::new(peripherals.RNG),
-    //     peripherals.RADIO_CLK,
-    //     &clocks,
-    // )
-    // .unwrap();
+    //let timer: PeriodicTimer<TimerX<TIMG0, 0>> = PeriodicTimer::new(timer0);
+    /* 
+    let timer_group = TimerGroup::new(peripherals.TIMG0, &clocks, None);
+    let timer: PeriodicTimer<TimerX<TIMG0>> = PeriodicTimer::new(TimerX<TIMG0>);
+   */
 
-    // let wifi = peripherals.WIFI;
-    // let (wifi_interface, controller) =
-    //     esp_wifi::wifi::new_with_mode(&init, wifi, WifiStaDevice).unwrap();
+
+   
+    /* 
+    let timer: PeriodicTimer<Timer> = PeriodicTimer::new(
+        esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG0, &clocks, None)
+            .timer0
+            .into(),
+     );
+    */
+    let timer = esp_hal::timer::systimer::SystemTimer::new(peripherals.SYSTIMER).alarm0;
+
+     let init = initialize(
+         EspWifiInitFor::Wifi,
+         timer,
+         Rng::new(peripherals.RNG),
+         peripherals.RADIO_CLK,
+         &clocks,
+     )
+     .unwrap();
+
+     let wifi = peripherals.WIFI;
+     let (wifi_interface, controller) =
+         esp_wifi::wifi::new_with_mode(&init, wifi, WifiStaDevice).unwrap();
 
     // let config = Config::dhcpv4(Default::default());
 
