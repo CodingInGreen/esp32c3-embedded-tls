@@ -36,6 +36,7 @@ use fugit;
 use heapless::String;
 use panic_halt as _;
 use static_cell::StaticCell;
+use rand;
 
 // WiFi
 const SSID: &str = env!("SSID");
@@ -152,6 +153,7 @@ async fn main(spawner: Spawner) {
 
     // Check the stack configuration
     let config_v4 = stack.config_v4();
+
     if let Some(config) = config_v4 {
         println!("IP Address: {:?}", config.address);
     } else {
@@ -159,6 +161,28 @@ async fn main(spawner: Spawner) {
     }
 
     println!("Stack IP Configuration: {:?}", stack.config_v4());
+
+     let mut read_record_buffer = [0; 16384];
+     let mut write_record_buffer = [0; 16384];
+     let config = TlsConfig::new().with_server_name("www.google.com");
+     let mut tls = TlsConnection::new(socket, &mut read_record_buffer, &mut write_record_buffer);
+
+     tls.open(TlsContext::new(
+         &config,
+         UnsecureProvider::new::<Aes128GcmSha256>(rand::rngs::OsRng),
+     ))
+     .await
+     .unwrap();
+
+     tls.write_all(b"GET / HTTP/1.1\r\nHost: www.google.com\r\n\r\n").await.unwrap();
+     tls.flush().await.unwrap();
+
+     let mut response = [0; 1024];
+     let size = tls.read(&mut response).await.unwrap();
+     println!("{}", str::from_utf8(&response[..size]).unwrap());
+
+}
+    /* 
 
     let mut rx_buffer = [0; 4096];
     let mut tx_buffer = [0; 4096];
@@ -192,26 +216,7 @@ async fn main(spawner: Spawner) {
     }
 
     socket.close();
-}
-
-// let mut read_record_buffer = [0; 16384];
-// let mut write_record_buffer = [0; 16384];
-// let config = TlsConfig::new().with_server_name("www.google.com");
-// let mut tls = TlsConnection::new(socket, &mut read_record_buffer, &mut write_record_buffer);
-
-// tls.open(TlsContext::new(
-//     &config,
-//     UnsecureProvider::new::<Aes128GcmSha256>(rand::rngs::OsRng),
-// ))
-// .await
-// .unwrap();
-
-// tls.write_all(b"GET / HTTP/1.1\r\nHost: www.google.com\r\n\r\n").await.unwrap();
-// tls.flush().await.unwrap();
-
-// let mut response = [0; 1024];
-// let size = tls.read(&mut response).await.unwrap();
-// println!("{}", str::from_utf8(&response[..size]).unwrap());
+    */
 
 #[embassy_executor::task]
 async fn net_task(stack: &'static Stack<WifiDevice<'static, WifiStaDevice>>) {
