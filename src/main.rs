@@ -26,6 +26,10 @@ use esp_wifi::wifi::WifiDevice;
 use static_cell::StaticCell;
 use core::str;
 use esp_hal_embassy;
+use heapless::String;
+
+const SSID: &str = env!("SSID");
+const PASSWORD: &str = env!("PASSWORD");
 
 #[main]
 async fn main(spawner: Spawner) {
@@ -45,6 +49,57 @@ async fn main(spawner: Spawner) {
 
     let timer = esp_hal::timer::systimer::SystemTimer::new(peripherals.SYSTIMER).alarm0;
 
+    let init = initialize(
+        EspWifiInitFor::Wifi,
+        timer,
+        Rng::new(peripherals.RNG),
+        peripherals.RADIO_CLK,
+        &clocks,
+    )
+    .unwrap();
+
+    let wifi = peripherals.WIFI;
+    let (wifi_interface, mut controller) =
+        esp_wifi::wifi::new_with_mode(&init, wifi, WifiStaDevice).unwrap();
+
+    let mut ssid: String<32> = String::new();
+    let mut password: String<64> = String::new();
+    ssid.push_str(SSID).unwrap();
+    password.push_str(PASSWORD).unwrap();
+
+    let client_config = ClientConfiguration {
+        ssid,
+        password,
+        ..Default::default()
+    };
+
+    controller.set_configuration(&Configuration::Client(client_config)).unwrap();
+    controller.start().await.unwrap();
+    controller.connect().await.unwrap();
+
+    let config = Config::dhcpv4(Default::default());
+    let seed = 1234;
+
+    static STACK: StaticCell<Stack<WifiDevice<'_, WifiStaDevice>>> = StaticCell::new();
+    static RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
+    let stack = &*STACK.init(Stack::new(
+        wifi_interface,
+        config,
+        RESOURCES.init(StackResources::<3>::new()),
+        seed,
+    ));
+
+    let mut rx_buffer = [0; 4096];
+    let mut tx_buffer = [0; 4096];
+
+    println!("Waiting to get IP address...");
+    while !stack.is_link_up() {
+        EmbassyTimer::after(Duration::from_millis(500)).await;
+    }
+
+    println!("Got IP: {:?}", stack.config_v4().unwrap().address);
+}
+    /* 
     let init = initialize(
         EspWifiInitFor::Wifi,
         timer,
@@ -81,7 +136,8 @@ async fn main(spawner: Spawner) {
 
     println!("Got IP: {:?}", stack.config_v4().unwrap().address);
 
-}
+    */
+
 
     /* 
     let timer_group = TimerGroup::new(peripherals.TIMG0, &clocks, None);
